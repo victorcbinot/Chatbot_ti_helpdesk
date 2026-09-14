@@ -1,0 +1,1 @@
+"""Pacote do CKP01 — Chatbot Profissional de Triagem de Chamados de TI."""

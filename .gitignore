@@ -1,0 +1,20 @@
+# Segredo
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Saídas geradas pelo context_rot.py
+context_rot.png
+
+# Gradio
+flagged/
+
+# SO / editor
+.DS_Store
+.vscode/
+.idea/
