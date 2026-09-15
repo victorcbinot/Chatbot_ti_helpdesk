@@ -58,7 +58,9 @@ def construir_interface() -> gr.Blocks:
             "gerar a triagem estruturada."
         )
 
-        chatbot = gr.Chatbot(label="Conversa com o TI.Assist", height=420)
+        chatbot = gr.Chatbot(
+            label="Conversa com o TI.Assist", height=420, type="tuples"
+        )
         entrada = gr.Textbox(
             label="Sua mensagem", placeholder="Ex: meu notebook não liga..."
         )
