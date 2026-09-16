@@ -1,81 +1,77 @@
 """
 main.py — Entry point do projeto (python -m app.main).
 """
-
-import gradio as gr
-
-from app.chain import build_conversation_chain, build_extraction_chain, formatar_historico_para_extracao
-
-conversation_chain = build_conversation_chain()
-extraction_chain = build_extraction_chain()
+from app.chain import (
+    build_conversation_chain,
+    build_extraction_chain,
+    formatar_historico_para_extracao,
+)
 
 
-def responder(mensagem: str, historico: list):
-    """Callback do chat: envia a mensagem para a Chain 1 (com memória)."""
-    resposta = conversation_chain.enviar_mensagem(mensagem)
-    historico = historico + [(mensagem, resposta)]
-    return "", historico
+def imprimir_analise(analise) -> None:
 
-
-def analisar_chamado(historico: list):
-    """
-    Callback do botão "Analisar chamado": roda a Chain 2 sobre o histórico
-    atual da conversa e retorna a saída estruturada (AnaliseChamado) já
-    validada pelo Pydantic.
-    """
-    if not historico:
-        return "Converse com o assistente antes de gerar a análise."
-
-    mensagens = []
-    for usuario_msg, assistente_msg in historico:
-        mensagens.append(("user", usuario_msg))
-        mensagens.append(("assistant", assistente_msg))
-
-    conversa_formatada = formatar_historico_para_extracao(mensagens)
-
-    try:
-        analise = extraction_chain.invoke({"conversa": conversa_formatada})
-    except Exception as exc:
-        return f"Erro ao gerar análise estruturada: {exc}"
-
-    return (
-        f"**Categoria:** {analise.categoria.value}\n"
-        f"**Urgência:** {analise.urgencia.value}\n"
-        f"**Sistema afetado:** {analise.sistema_afetado}\n"
-        f"**Resumo:** {analise.resumo_problema}\n"
-        f"**Ação recomendada:** {analise.acao_recomendada}\n"
-        f"**Requer escalonamento humano:** "
+    print("\n" + "=" * 60)
+    print("ANÁLISE ESTRUTURADA DO CHAMADO")
+    print("=" * 60)
+    print(f"Categoria:            {analise.categoria.value}")
+    print(f"Urgência:             {analise.urgencia.value}")
+    print(f"Sistema afetado:      {analise.sistema_afetado}")
+    print(f"Resumo:               {analise.resumo_problema}")
+    print(f"Ação recomendada:     {analise.acao_recomendada}")
+    print(
+        "Requer escalonamento: "
         f"{'Sim' if analise.requer_escalonamento else 'Não'}"
     )
+    print("=" * 60 + "\n")
 
 
-def construir_interface() -> gr.Blocks:
-    with gr.Blocks(title="TI.Assist — Triagem de Chamados de TI") as demo:
-        gr.Markdown("# 🖥️ TI.Assist — Assistente de Triagem de Chamados de TI")
-        gr.Markdown(
-            "Converse descrevendo seu problema técnico. Quando achar que já "
-            "deu detalhes suficientes, clique em **Analisar chamado** para "
-            "gerar a triagem estruturada."
-        )
+def main() -> None:
+    conversation_chain = build_conversation_chain()
+    extraction_chain = build_extraction_chain()
 
-        chatbot = gr.Chatbot(
-            label="Conversa com o TI.Assist", height=420, type="tuples"
-        )
-        entrada = gr.Textbox(
-            label="Sua mensagem", placeholder="Ex: meu notebook não liga..."
-        )
-        enviar_btn = gr.Button("Enviar", variant="primary")
 
-        analisar_btn = gr.Button("📋 Analisar chamado (saída estruturada)")
-        saida_analise = gr.Markdown(label="Análise do chamado")
+    historico_tuplas: list[tuple[str, str]] = []
 
-        enviar_btn.click(responder, [entrada, chatbot], [entrada, chatbot])
-        entrada.submit(responder, [entrada, chatbot], [entrada, chatbot])
-        analisar_btn.click(analisar_chamado, [chatbot], [saida_analise])
+    print("=" * 60)
+    print("TI.Assist — Assistente de Triagem de Chamados de TI")
+    print("=" * 60)
+    print("Descreva seu problema técnico. Comandos especiais:")
+    print("  analisar  -> gera a análise estruturada do chamado")
+    print("  sair      -> encerra a conversa")
+    print("=" * 60 + "\n")
 
-    return demo
+    while True:
+        mensagem = input("Você: ").strip()
+
+        if not mensagem:
+            continue
+
+        if mensagem.lower() in ("sair", "exit", "quit"):
+            print("\nTI.Assist: Até mais! Chamado encerrado.")
+            break
+
+        if mensagem.lower() == "analisar":
+            if not historico_tuplas:
+                print(
+                    "\nTI.Assist: Ainda não há conversa suficiente para "
+                    "analisar. Descreva o problema primeiro.\n"
+                )
+                continue
+
+            conversa_formatada = formatar_historico_para_extracao(historico_tuplas)
+            try:
+                analise = extraction_chain.invoke({"conversa": conversa_formatada})
+                imprimir_analise(analise)
+            except Exception as exc:
+                print(f"\nErro ao gerar análise estruturada: {exc}\n")
+            continue
+
+        resposta = conversation_chain.enviar_mensagem(mensagem)
+        print(f"\nTI.Assist: {resposta}\n")
+
+        historico_tuplas.append(("user", mensagem))
+        historico_tuplas.append(("assistant", resposta))
 
 
 if __name__ == "__main__":
-    interface = construir_interface()
-    interface.launch(server_name="0.0.0.0", server_port=7860)
+    main()
