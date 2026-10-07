@@ -1,3 +1,4 @@
+#CP01
 langchain>=0.3.30
 langchain-core>=0.3.86
 langchain-community>=0.3.31
@@ -6,3 +7,11 @@ pydantic>=2.9.2
 python-dotenv>=1.0.1
 tiktoken>=0.8.0
 matplotlib>=3.9.2
+
+#CP02
+pypdf==5.9.0
+langchain-text-splitters==0.3.11
+langchain-chroma==0.2.6
+chromadb==1.5.9
+ragas==0.4.3
+datasets==5.1.0

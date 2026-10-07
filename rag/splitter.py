@@ -65,7 +65,7 @@ def dividir_com_todas_configuracoes(
 
 
 if __name__ == "__main__":
-    from app.loader import carregar_documentos
+    from rag.loader import carregar_documentos
 
     documentos = carregar_documentos()
     print()

@@ -94,8 +94,8 @@ def carregar_vectorstore(
 
 
 if __name__ == "__main__":
-    from app.loader import carregar_documentos
-    from app.splitter import dividir_com_todas_configuracoes
+    from rag.loader import carregar_documentos
+    from rag.splitter import dividir_com_todas_configuracoes
 
     documentos = carregar_documentos()
     print()
