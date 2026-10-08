@@ -14,27 +14,12 @@ langchain-text-splitters==0.3.11
 langchain-chroma==0.2.6
 chromadb==1.5.9
 
-
-
-
-# Dependencias do ragas instaladas aqui MANUALMENTE (sem o proprio ragas),
-# para evitar que o pip tente instalar "scikit-network" junto -- esse
-# pacote nao tem wheel pronta para Python 3.14 no Windows e quebra o
-# "pip install -r requirements.txt" tentando compilar do zero.
-# O ragas em si NAO usa scikit-network para nada que a gente chama
-# (evaluate, faithfulness, answer_relevancy, os wrappers do LangChain).
-# Por isso o ragas e instalado SEPARADAMENTE com --no-deps -- ver
-# instrucoes_instalacao.txt.
 datasets==5.1.0
-instructor==1.17.0
-networkx==3.7
-diskcache==5.6.3
-appdirs==1.4.4
-rich==13.9.4
-typer==0.27.3
-nest-asyncio==1.6.0
-pillow==12.1.1
-tqdm==4.70.1
-numpy==2.4.4
-openai==2.54.0
-langchain-openai==0.3.35
+
+# ragas fixado em 0.3.3 DE PROPOSITO: a partir da 0.3.4 ele passa a exigir o
+# pacote "scikit-network", que nao tem build pronta para o Python mais novo
+# no Windows e quebra o "pip install". A 0.3.3 e a versao mais recente sem
+# essa dependencia e funciona com o nosso codigo (evaluate, faithfulness,
+# answer_relevancy). NAO atualize sem testar.
+ragas==0.3.3
+
