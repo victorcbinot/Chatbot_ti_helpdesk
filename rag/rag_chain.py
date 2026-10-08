@@ -138,7 +138,6 @@ def buscar(consulta: str, config_nome: str = "grande_1024") -> str:
     chain = build_rag_chain(config_nome)
     return chain.invoke(consulta)
 
-
 if __name__ == "__main__":
     pergunta_teste = "Meu computador não liga, o que eu faço?"
     print(f"Pergunta: {pergunta_teste}\n")
