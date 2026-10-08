@@ -1,8 +1,8 @@
 """
 embeddings_store.py — Etapas "embed" e "store" do pipeline RAG.
 
-Gera embeddings dos chunks com nomic-embed-text (via Ollama Cloud) e
-armazena no ChromaDB local — uma coleção por configuração de chunking,
+Gera embeddings dos chunks com nomic-embed-text via Ollama local
+e armazena no ChromaDB local — uma coleção por configuração de chunking,
 para permitir comparar as duas estratégias (512 vs 1024) de forma isolada.
 """
 
@@ -23,26 +23,15 @@ CHROMA_DIR = Path(__file__).resolve().parent.parent / "chroma_db"
 DOMINIO = "ti_helpdesk"
 
 
-def _get_api_key() -> str:
-    api_key = os.getenv("OLLAMA_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OLLAMA_API_KEY não encontrada. Copie .env.example para .env "
-            "e preencha sua chave da Ollama Cloud."
-        )
-    return api_key
-
-
 def build_embeddings() -> OllamaEmbeddings:
     """
-    Instancia o modelo de embeddings nomic-embed-text via Ollama Cloud.
-    Único modelo de embedding aprovado pelo enunciado do CKP02.
+    Instancia o modelo de embeddings nomic-embed-text via Ollama local.
     """
-    base_url = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+    base_url = os.getenv("OLLAMA_EMBED_BASE_URL", "http://localhost:11434")
+
     return OllamaEmbeddings(
         model="nomic-embed-text",
         base_url=base_url,
-        client_kwargs={"headers": {"Authorization": f"Bearer {_get_api_key()}"}},
     )
 
 
@@ -63,7 +52,7 @@ def criar_vectorstore(
 
     O parâmetro `embeddings` existe principalmente para permitir testes
     automatizados com um modelo de embeddings substituto, sem depender da
-    Ollama Cloud de verdade.
+    Ollama local de verdade.
     """
     embeddings = embeddings or build_embeddings()
     colecao = nome_colecao(config_nome)
@@ -74,7 +63,9 @@ def criar_vectorstore(
         collection_name=colecao,
         persist_directory=str(persist_dir),
     )
+
     print(f"  [{colecao}] {len(chunks)} chunks armazenados em {persist_dir}")
+
     return vectorstore
 
 
@@ -86,6 +77,7 @@ def carregar_vectorstore(
     """Carrega uma coleção já existente do ChromaDB, sem gerar embeddings de novo."""
     embeddings = embeddings or build_embeddings()
     colecao = nome_colecao(config_nome)
+
     return Chroma(
         collection_name=colecao,
         embedding_function=embeddings,
@@ -99,9 +91,11 @@ if __name__ == "__main__":
 
     documentos = carregar_documentos()
     print()
+
     configuracoes = dividir_com_todas_configuracoes(documentos)
 
     print("\nGerando embeddings e armazenando no ChromaDB...")
+
     for nome, chunks in configuracoes.items():
         criar_vectorstore(chunks, nome)
 
