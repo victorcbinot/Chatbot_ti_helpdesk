@@ -37,11 +37,12 @@ Todos os documentos são PDFs originais, baixados das fontes oficiais, e ficam n
 cp .env.example .env          # edite com sua OLLAMA_API_KEY — este arquivo NÃO vai no .zip
 pip install -r requirements.txt
 python -m rag.main            # chat no terminal
+streamlit run app/interface.py  # interface web (opcional, ver seção "Interface web")
 ```
 
-Na **primeira execução**, o `main.py` lê os PDFs de `docs/`, divide em chunks, gera os embeddings (`nomic-embed-text`) e grava no ChromaDB (`chroma_db/`). Nas execuções seguintes ele reaproveita essa base.
+Na **primeira execução**, o `main.py` lê os PDFs de `docs/`, divide em chunks, gera os embeddings (`nomic-embed-text` local) e grava no ChromaDB (`chroma_db/`). Se o reranking estiver ativo, ele também baixa o cross-encoder da Hugging Face no primeiro uso (dependência `sentence-transformers`/`torch`). Nas execuções seguintes ele reaproveita a base.
 
-Comandos dentro do chat: `fontes` (lista os documentos), `config` (troca a configuração de chunking) e `sair`.
+Comandos dentro do chat: `fontes` (lista os documentos), `config` (troca a configuração de chunking), `filtro` (aplica/remove um filtro de metadata — ver seção **Metadata Filtering**), `rerank` (ativa/desativa o reranking em runtime — ver seção **Reranking**) e `sair`.
 
 Para rodar a avaliação com RAGAS (gera o `ragas_resultado.md`):
 
@@ -52,9 +53,10 @@ python -m rag.ragas_eval
 ## Como adicionar novos documentos à base
 
 1. Copie o novo arquivo **`.pdf`** (com texto selecionável, não escaneado) para a pasta `docs/`.
-2. **Apague a pasta `chroma_db/`** — o `main.py` só reconstrói a base quando ela não existe.
-3. Rode `python -m rag.main`: a base é reconstruída com todos os PDFs de `docs/`.
-4. Registre a fonte (título e link) na tabela acima.
+2. Registre o arquivo em `rag/metadata.py` (dicionário `METADADOS_POR_ARQUIVO`), informando `categoria`, `fornecedor` e `tipo_documento` reais. Sem esse registro o documento entra como `Não classificado` e não responde bem aos filtros.
+3. **Apague a pasta `chroma_db/`** — o `main.py` só reconstrói a base quando ela não existe.
+4. Rode `python -m rag.main`: a base é reconstruída com todos os PDFs de `docs/`.
+5. Registre a fonte (título e link) na tabela acima.
 
 Se um PDF não tiver texto extraível, o `loader.py` mostra um `[AVISO]` com o nome do arquivo.
 
@@ -76,18 +78,131 @@ Perguntas testadas no chatbot (`python -m rag.main`) que retornam resposta com i
 
 Esse é o comportamento esperado do prompt (ver `rag/rag_chain.py`). A base cobre rede, segurança de acesso e depuração de aplicações Java, mas não traz um guia de diagnóstico básico de hardware: o manual da Lenovo é voltado a técnicos (substituição de peças e índice de sintomas).
 
+## Diferencial CP2 — Metadata Filtering
+
+Cada documento de `docs/` recebe metadados de classificação **reais** (extraídos do próprio conteúdo dos PDFs, ver tabela da base acima) durante o carregamento. Eles são preservados nos chunks e gravados no ChromaDB, permitindo filtrar a busca pelo recurso `where` do ChromaDB. O filtro é **opcional**: sem ele, a busca se comporta exatamente como antes.
+
+Campos filtráveis (definidos em `rag/metadata.py`):
+
+| Campo | Valores disponíveis |
+|---|---|
+| `categoria` | `Rede`, `Hardware`, `Software`, `Acesso` |
+| `fornecedor` | `Cisco`, `Lenovo`, `Oracle`, `CISA` |
+| `tipo_documento` | `Troubleshooting Guide`, `Hardware Maintenance Manual`, `Guide`, `Fact Sheet` |
+
+### Como usar no chat
+
+O comando `filtro` aplica um filtro a todas as perguntas seguintes (não é preciso repeti-lo a cada consulta):
+
+```text
+Você: filtro
+  categoria: ['Acesso', 'Hardware', 'Rede', 'Software']
+  fornecedor: ['CISA', 'Cisco', 'Lenovo', 'Oracle']
+  tipo_documento: ['Fact Sheet', 'Guide', 'Hardware Maintenance Manual', 'Troubleshooting Guide']
+Filtro atual: sem filtro
+Filtro (ex: categoria=Rede, fornecedor=CISA) ou 'limpar': categoria=Rede
+Filtro aplicado: categoria=Rede
+```
+
+Aceita mais de um campo separado por vírgula (ex.: `categoria=Acesso, fornecedor=CISA`). Use `filtro` → `limpar` para voltar à busca sem filtro.
+
+### Como usar no código
+
+```python
+from rag.metadata import construir_filtro
+from rag.rag_chain import buscar, buscar_chunks
+
+# Sem filtro — comportamento original
+buscar("Como diagnosticar conectividade de rede com ping?")
+
+# Com filtro (recurso `where` do ChromaDB)
+filtro = construir_filtro(categoria="Rede")
+buscar("Como diagnosticar conectividade de rede com ping?", filtro=filtro)
+
+# Só recuperar os trechos (sem gerar resposta), já com metadata preservado
+docs = buscar_chunks("boas práticas de acesso remoto", filtro=filtro)
+```
+
+`construir_filtro()` aceita `categoria`, `fornecedor` e `tipo_documento`; campos vazios são ignorados e múltiplos campos geram um `{"$and": [...]}`. Um filtro sem correspondência retorna lista vazia (sem erro).
+
+> Ao mudar os metadados, apague `chroma_db/` e rode `python -m rag.main` de novo para reindexar.
+
+## Diferencial CP2 — Reranking
+
+O pipeline ganhou uma etapa de **reranking** entre o retrieve e o generate (implementação em `rag/reranker.py`), sem substituir nenhum componente obrigatório:
+
+```
+ChromaDB (recupera fetch_k candidatos, com filtro opcional)
+   → cross-encoder (reordena por relevância com a pergunta)
+   → top_k finais → gemma4:cloud
+```
+
+- **Recuperação:** o ChromaDB continua sendo a primeira etapa, agora retornando **`RERANKER_FETCH_K` candidatos** (padrão 10) em vez dos 4 finais.
+- **Reranker:** um **cross-encoder** (`cross-encoder/ms-marco-MiniLM-L-6-v2`, via `sentence-transformers`) pontua a relação de cada candidato com a pergunta e reordena a lista por score decrescente.
+- **Generate:** apenas os **`RERANKER_TOP_K` melhores** (padrão 4) e seus metadados (fonte, página, categoria, fornecedor, tipo) vão para o prompt do `gemma4:cloud`.
+
+**Dependências:** `torch` + `sentence-transformers` (o cross-encoder roda **localmente**, em CPU/GPU, e é **baixado da Hugging Face no primeiro uso** — cerca de 90 MB). Ao rodar `pip install -r requirements.txt` pela primeira vez após esta atualização, instale essas novas dependências.
+
+### Como desativar/comparar
+
+O reranking é opcional e pode ser desativado mantendo o comportamento original (busca `top_k` direto no ChromaDB):
+
+1. **Por variável de ambiente** (padrão para todo o pipeline):
+   ```bash
+   $env:RERANKER_ATIVO="false"   # PowerShell
+   # ou em .env: RERANKER_ATIVO=false
+   ```
+2. **No chat:** comando `rerank` → `off` (para reativar, `on`).
+3. **No código:** parâmetro `rerank=`:
+   ```python
+   from rag.rag_chain import buscar, buscar_chunks
+
+   buscar("pergunta")                           # usa RERANKER_ATIVO (env)
+   buscar("pergunta", rerank=False)             # desativa só nessa chamada
+   buscar_chunks("pergunta", k=4, rerank=True)  # recupera com reranking
+   buscar_chunks("pergunta", k=4, rerank=False) # recuperação original
+   ```
+
+**Configuração (variáveis de ambiente, retêm os padrões acima):** `RERANKER_ATIVO` (`true`/`false`), `RERANKER_FETCH_K` (candidatos antes do rerank, padrão 10), `RERANKER_TOP_K` (trechos finais, padrão 4).
+
+> **Nota de honestidade sobre ganhos:** o cross-encoder `ms-marco` foi treinado para o inglês e as perguntas da avaliação são em português; os scores absolutos são negativos e o reranking **reordena** os trechos, mas **não é garantia de ganho de qualidade** nas métricas. A avaliação RAGAS (`python -m rag.ragas_eval`) passou a coletar o contexto pelo mesmo caminho do generate (`buscar_chunks`), então rode com `RERANKER_ATIVO=false` para comparar com a baseline anterior registrada em `ragas_resultado.md`.
+
+## Diferencial CP2 — Interface web (Streamlit)
+
+O projeto ganhou uma interface gráfica web com **Streamlit** (`app/interface.py`). Ela **reutiliza o mesmo pipeline** do chat de terminal — em vez de chamar a chain diretamente, usa a função `buscar_com_fontes()` de `rag/rag_chain.py`, que devolve a resposta **e** os trechos que a sustentam — sem duplicar load, embeddings, retrieve ou generate.
+
+```bash
+streamlit run app/interface.py   # abre em http://localhost:8501
+```
+
+**O que a interface oferece** (tudo na barra lateral, sem alterar o pipeline):
+
+- **Histórico da conversa** mantido em `st.session_state`, com botão "Limpar conversa".
+- **Configuração de chunking** (default: `CONFIG_PADRAO` de `rag/main.py`), alternando entre as coleções reindexadas do ChromaDB.
+- **Filtro de metadata** (Metadata Filtering): selects de `categoria`, `fornecedor` e `tipo_documento` com os valores disponíveis, montados por `construir_filtro()` — com opção "Sem filtro".
+- **Toggle de reranking** (Reranking): liga/desliga a etapa de cross-encoder ao vivo (default: `RERANKER_ATIVO`).
+- **Fontes citadas:** cada resposta abre um expander **"Fontes usadas (N)"** com documento, página e classificação (categoria · fornecedor · tipo) por trecho.
+- **Tratamento de erros amigável** (sem expor credenciais): se o Ollama local/Cloud estiver indisponível ou a base não tiver trechos suficientes, a interface informa claramente em vez de "inventar".
+
+A funcionalidade foi validada com `streamlit.testing` (AppTest): render da página sem exceção, pergunta real respondida com fonte citada e filtro `categoria=Acesso` aplicado pela sidebar retornando apenas fontes dessa categoria.
+
+> Requisito: `streamlit` entra no `requirements.txt` a partir desta atualização. A primeira execução do chat/interface baixa o cross-encoder da Hugging Face se o reranking estiver ativo.
+
 ## Arquitetura do pipeline
 
 | Etapa | Arquivo | O que faz |
 |---|---|---|
-| load | `rag/loader.py` | Lê os PDFs de `docs/` (uma página = um `Document`, com `source` e `page`) |
+| load | `rag/loader.py` | Lê os PDFs de `docs/` (uma página = um `Document`, com `source`, `page` e os metadados de classificação) |
+| metadata | `rag/metadata.py` | Registra `categoria`/`fornecedor`/`tipo_documento` de cada PDF e monta filtros no formato `where` do ChromaDB |
 | split | `rag/splitter.py` | `RecursiveCharacterTextSplitter` com separadores `["\n\n", "\n", ". ", " ", ""]` e overlap de 15% |
-| embed + store | `rag/embeddings_store.py` | `nomic-embed-text` (Ollama Cloud) + ChromaDB, uma coleção por configuração de chunking |
-| retrieve + generate | `rag/rag_chain.py` | Chain única `retriever \| prompt \| llm \| parser` com `gemma4:cloud` (`temperature=0`) |
+| embed + store | `rag/embeddings_store.py` | `nomic-embed-text` (Ollama local) + ChromaDB, uma coleção por configuração de chunking |
+| rerank | `rag/reranker.py` | Cross-encoder `cross-encoder/ms-marco-MiniLM-L-6-v2` reordena os `fetch_k` candidatos e devolve os `top_k` ao LLM (desativável) |
+| retrieve + generate | `rag/rag_chain.py` | Chain única `retriever \| prompt \| llm \| parser` com `gemma4:cloud` (`temperature=0`), com suporte a filtro de metadata e reranking |
 | avaliação | `rag/ragas_eval.py` | RAGAS (`faithfulness` + `answer_relevancy`) para cada configuração de chunking |
 | interface | `rag/main.py` | CLI de perguntas e respostas com fonte citada |
+| interface web | `app/interface.py` | UI Streamlit que reutiliza `buscar_com_fontes()` com filtro de metadata, reranking e fontes na sidebar |
 
-A função `buscar(consulta)` (em `rag/rag_chain.py`) recebe uma string e devolve uma string, para ser reaproveitada como `@tool` no CKP03.
+A função `buscar(consulta)` (em `rag/rag_chain.py`) recebe uma string e devolve uma string, para ser reaproveitada como `@tool` no CKP03. Ela ganhou um parâmetro opcional `filtro=` (Metadata Filtering) — sem ele, a assinatura e o comportamento originais são mantidos.
 
 ## Comparação de chunking + RAGAS
 

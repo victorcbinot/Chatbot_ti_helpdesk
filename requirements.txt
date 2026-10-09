@@ -23,3 +23,10 @@ datasets==5.1.0
 # answer_relevancy). NAO atualize sem testar.
 ragas==0.3.3
 
+#CP2 diferencial - reranking (cross-encoder via sentence-transformers)
+sentence-transformers>=6.1.0
+torch>=2.14.0
+
+#CP2 diferencial - interface web (Streamlit)
+streamlit>=1.36.0
+

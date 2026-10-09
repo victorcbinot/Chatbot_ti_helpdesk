@@ -22,8 +22,8 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import answer_relevancy, faithfulness
 
-from rag.embeddings_store import build_embeddings, carregar_vectorstore
-from rag.rag_chain import build_llm, build_rag_chain
+from rag.embeddings_store import build_embeddings
+from rag.rag_chain import build_llm, build_rag_chain, buscar_chunks
 from rag.splitter import CONFIGURACOES_CHUNKING
 
 # >= 5 perguntas de teste (requisito obrigatório do CKP02), cobrindo as
@@ -45,16 +45,18 @@ def _coletar_respostas_e_contextos(
     """
     Para cada pergunta, roda o retriever + generate e coleta (resposta,
     contextos usados) — entrada necessária para calcular o RAGAS.
+
+    Os contextos coletados vêm de buscar_chunks(), que aplica EXATAMENTE o
+    mesmo caminho do generate (retrieve + reranking opcional), para a
+    métrica de faithfulness comparar a resposta com o contexto de fato usado.
     """
-    vectorstore = carregar_vectorstore(config_nome)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": k})
     chain = build_rag_chain(config_nome, k=k)
 
     respostas: list[str] = []
     contextos: list[list[str]] = []
 
     for pergunta in perguntas:
-        documentos_recuperados = retriever.invoke(pergunta)
+        documentos_recuperados = buscar_chunks(pergunta, config_nome, k=k)
         contextos.append([d.page_content for d in documentos_recuperados])
 
         resposta = chain.invoke(pergunta)
