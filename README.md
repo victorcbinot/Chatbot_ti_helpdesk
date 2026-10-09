@@ -24,7 +24,7 @@ Todos os documentos são PDFs originais, baixados das fontes oficiais, e ficam n
 | # | Arquivo em `docs/` | Documento | Fonte | Categoria |
 |---|---|---|---|---|
 | 1 | `01_cisco_troubleshooting_tcp_ip.pdf` | Troubleshooting TCP/IP (*Internetworking Troubleshooting Handbook*, cap. 7) | Cisco — https://www.cisco.com/en/US/docs/internetworking/troubleshooting/guide/tr1907.pdf | Rede |
-| 2 | `02_lenovo_hardware_maintenance_manual.pdf` | ThinkPad X9-14 Gen 1 — Hardware Maintenance Manual (3ª edição, fev/2026) | Lenovo — https://download.lenovo.com/pccbbs/mobiles_pdf/x9_14_gen1_hmm_en.pdf | Hardware |
+| 2 | `02_lenovo_hardware_maintenance_manual.pdf` | Hardware Maintenance Manual (3ª edição, fev/2026) | Lenovo — https://download.lenovo.com/pccbbs/mobiles_pdf/x9_14_gen1_hmm_en.pdf | Hardware |
 | 3 | `03_oracle_java_troubleshooting_guide.pdf` | Java SE 17 — Troubleshooting Guide | Oracle — https://docs.oracle.com/en/java/javase/17/troubleshoot/troubleshooting-guide.pdf | Software |
 | 4 | `04_cisa_remote_access_software.pdf` | Guide to Securing Remote Access Software | CISA — https://www.cisa.gov/sites/default/files/2023-06/guide_to_securing_remote_access_software.pdf | Acesso |
 | 5 | `05_cisa_phishing_resistant_mfa.pdf` | Implementing Phishing-Resistant MFA | CISA — https://www.cisa.gov/sites/default/files/publications/fact-sheet-implementing-phishing-resistant-mfa-508c.pdf | Acesso |
@@ -34,7 +34,7 @@ Todos os documentos são PDFs originais, baixados das fontes oficiais, e ficam n
 ## Como executar (local — sem Colab)
 
 ```bash
-cp .env.example .env          # edite com sua OLLAMA_API_KEY — este arquivo NÃO vai no .zip
+cp .env.example .env          # edite com sua OLLAMA_API_KEY 
 pip install -r requirements.txt
 python -m rag.main            # chat no terminal
 streamlit run app/interface.py  # interface web (opcional, ver seção "Interface web")
