@@ -22,14 +22,35 @@ CHROMA_DIR = Path(__file__).resolve().parent.parent / "chroma_db"
 # Nome base do domínio, usado para nomear as coleções do ChromaDB.
 DOMINIO = "ti_helpdesk"
 
+# Tamanho de cada sub-lote ao enviar textos para o Ollama.
+# O servidor Ollama abre uma conexão TCP interna ao runner por texto; lotes
+# grandes saturam a fila de conexões do loopback e o runner passa a recusar
+# novas conexões (HTTP 400 em /tokenize). Sub-lotes pequenos evitam isso.
+EMBED_BATCH_SIZE = 64
+
+
+class BatchingOllamaEmbeddings(OllamaEmbeddings):
+    """OllamaEmbeddings que envia os textos ao Ollama em sub-lotes."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        vetores: list[list[float]] = []
+        for i in range(0, len(texts), EMBED_BATCH_SIZE):
+            vetores.extend(
+                super().embed_documents(texts[i : i + EMBED_BATCH_SIZE])
+            )
+        return vetores
+
 
 def build_embeddings() -> OllamaEmbeddings:
     """
     Instancia o modelo de embeddings nomic-embed-text via Ollama local.
+
+    Usa BatchingOllamaEmbeddings para enviar os textos em sub-lotes e evitar
+    a saturação de conexões internas do servidor Ollama com lotes grandes.
     """
     base_url = os.getenv("OLLAMA_EMBED_BASE_URL", "http://localhost:11434")
 
-    return OllamaEmbeddings(
+    return BatchingOllamaEmbeddings(
         model="nomic-embed-text",
         base_url=base_url,
     )
