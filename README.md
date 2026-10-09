@@ -1,13 +1,14 @@
 # CKP02 — DocMind RAG · Assistente de Triagem de Chamados de TI
 
 **Prompt Engineering & AI · FIAP · 2º Semestre 2026**
+
 **Integrantes:**
 | Nome | RM |
 |-|-|
 | Gustavo Kunitaki | 571400 |
 | Pedro Ferreras | 568713 |
 | Pedro Santos | 571017 |
-| Victor Binot | 571499 |**
+| Victor Binot | 571499 |
 
 ## Domínio
 
