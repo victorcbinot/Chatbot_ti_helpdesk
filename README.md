@@ -3,8 +3,9 @@
 **Prompt Engineering & AI · FIAP · 2º Semestre 2026**
 
 **Integrantes:**
+
 | Nome | RM |
-|-|-|
+|---|---|
 | Gustavo Kunitaki | 571400 |
 | Pedro Ferreras | 568713 |
 | Pedro Santos | 571017 |
@@ -31,6 +32,18 @@ Todos os documentos são PDFs originais, baixados das fontes oficiais, e ficam n
 | 5 | `05_cisa_phishing_resistant_mfa.pdf` | Implementing Phishing-Resistant MFA | CISA — https://www.cisa.gov/sites/default/files/publications/fact-sheet-implementing-phishing-resistant-mfa-508c.pdf | Acesso |
 
 > Os documentos estão em inglês e as perguntas/respostas em português: o `nomic-embed-text` rende melhor em inglês, então perguntas muito vagas podem recuperar trechos menos precisos.
+
+## Pré-requisitos
+
+- **Ollama instalado e em execução na máquina** (https://ollama.com/download), com o modelo de embeddings baixado:
+
+  ```bash
+  ollama pull nomic-embed-text
+  ```
+
+  Os embeddings são gerados **localmente** (variável `OLLAMA_EMBED_BASE_URL`, padrão `http://localhost:11434`). Sem o Ollama rodando, a primeira execução falha ao gerar os embeddings.
+- **Chave da Ollama Cloud** (`OLLAMA_API_KEY`) para o modelo de geração `gemma4:cloud`.
+- **Acesso à internet na primeira execução** com o reranking ativo (padrão): o cross-encoder é baixado da Hugging Face (ver seção **Reranking**).
 
 ## Como executar (local — sem Colab)
 
@@ -142,7 +155,7 @@ ChromaDB (recupera fetch_k candidatos, com filtro opcional)
 - **Reranker:** um **cross-encoder** (`cross-encoder/ms-marco-MiniLM-L-6-v2`, via `sentence-transformers`) pontua a relação de cada candidato com a pergunta e reordena a lista por score decrescente.
 - **Generate:** apenas os **`RERANKER_TOP_K` melhores** (padrão 4) e seus metadados (fonte, página, categoria, fornecedor, tipo) vão para o prompt do `gemma4:cloud`.
 
-**Dependências:** `torch` + `sentence-transformers` (o cross-encoder roda **localmente**, em CPU/GPU, e é **baixado da Hugging Face no primeiro uso** — cerca de 90 MB). Ao rodar `pip install -r requirements.txt` pela primeira vez após esta atualização, instale essas novas dependências.
+**Dependências:** `torch` + `sentence-transformers` (o cross-encoder roda **localmente**, em CPU/GPU, e é **baixado da Hugging Face no primeiro uso** — cerca de 90 MB). A instalação do `torch` é pesada (vários GB no Linux, por causa das bibliotecas CUDA; costuma ser menor no Windows), então prefira instalar em um ambiente virtual novo: `pip install -r requirements.txt`. Se o cross-encoder não puder ser carregado (por exemplo, sem acesso à Hugging Face), o chat registra um `[AVISO]` e segue com a ordem original dos trechos.
 
 ### Como desativar/comparar
 
@@ -171,6 +184,8 @@ O reranking é opcional e pode ser desativado mantendo o comportamento original 
 ## Diferencial CP2 — Interface web (Streamlit)
 
 O projeto ganhou uma interface gráfica web com **Streamlit** (`app/interface.py`). Ela **reutiliza o mesmo pipeline** do chat de terminal — em vez de chamar a chain diretamente, usa a função `buscar_com_fontes()` de `rag/rag_chain.py`, que devolve a resposta **e** os trechos que a sustentam — sem duplicar load, embeddings, retrieve ou generate.
+
+> **Por que Streamlit e não Gradio?** O enunciado cita Gradio para esse diferencial, mas o grupo optou pelo Streamlit porque o Gradio estava apresentando erros no nosso ambiente. Já no CKP01 tivemos problemas de compatibilidade (o formato do histórico do `gr.Chatbot` mudou entre versões do Gradio e quebrou a interface) e, neste projeto, voltaram a aparecer erros ao usá-lo. Trocamos pelo Streamlit, que entrega a mesma funcionalidade pedida: chat com o RAG integrado e a fonte citada em cada resposta.
 
 ```bash
 streamlit run app/interface.py   # abre em http://localhost:8501
@@ -209,6 +224,8 @@ A função `buscar(consulta)` (em `rag/rag_chain.py`) recebe uma string e devolv
 
 Foram comparadas duas configurações de `chunk_size`, ambas com `chunk_overlap` de 15% e o mesmo `RecursiveCharacterTextSplitter`. Cada configuração tem sua própria coleção no ChromaDB. A avaliação usou 6 perguntas de teste (definidas em `rag/ragas_eval.py`), recuperação de `k = 4` trechos, `gemma4:cloud` com `temperature = 0` e embeddings `nomic-embed-text`. O gerador também atuou como juiz do RAGAS. O resultado completo está em `ragas_resultado.md`.
 
+> **Importante:** os números abaixo foram medidos **antes** dos diferenciais da CP2 — sem reranking e sem filtro de metadata (equivalente a `RERANKER_ATIVO=false`). Hoje o reranking vem ligado por padrão; ao rodar `python -m rag.ragas_eval` de novo, o contexto passa pelo mesmo caminho do generate (`buscar_chunks`) e os valores podem mudar. Para reproduzir esta tabela, rode com `RERANKER_ATIVO=false`.
+
 | Configuração | chunk_size | chunk_overlap | Faithfulness médio | Answer Relevancy médio |
 |---|---|---|---|---|
 | `pequeno_512` | 512 | 77 | **0,847** | **0,406** |
@@ -243,4 +260,5 @@ Foram comparadas duas configurações de `chunk_size`, ambas com `chunk_overlap`
 ## Notas técnicas
 
 - **Versão do ragas:** fixada em `0.3.3` no `requirements.txt` de propósito. A partir da `0.3.4` ele exige o pacote `scikit-network`, que não tem build pronta para Python recente no Windows e quebra o `pip install`. A `0.3.3` funciona com o código do projeto.
+- **Interface em Streamlit (não Gradio):** o Gradio apresentou erros no ambiente do grupo, então a interface web foi feita em Streamlit — ver a seção "Diferencial CP2 — Interface web (Streamlit)".
 - **Chave de API:** `OLLAMA_API_KEY` fica no `.env` (carregado com `python-dotenv`) e nunca vai no `.zip`; só o `.env.example`.
