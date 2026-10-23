@@ -30,3 +30,15 @@ torch>=2.14.0
 #CP2 diferencial - interface web (Streamlit)
 streamlit>=1.36.0
 
+#CP3 - agente ReAct. IMPORTANTE: o AgentExecutor/create_react_agent NAO pode
+#ser importado de "langchain.agents" neste ambiente (bug do langchain.chains
+#com Python 3.14 + Pydantic - ver app/memory_manager.py). Os imports vêm do
+#pacote "langchain-classic", que funciona no venv mas não estava listado.
+#NAO remova esta dependência.
+langchain-classic>=1.0.8
+
+#CP3 - interface web (Gradio). API do gr.Chatbot mudou entre versoes na CP1;
+#por isso a versão é fixada na que foi testada (6.x, formato type="messages").
+gradio>=6.30.0
+
+

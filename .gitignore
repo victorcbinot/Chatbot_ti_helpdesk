@@ -13,6 +13,7 @@ context_rot.png
 
 # Gradio
 flagged/
+.gradio/
 
 # SO / editor
 .DS_Store
