@@ -25,7 +25,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 # Módulo inteiro para patch nos pontos referenciados pelas funções das tools.
 import agent.tools as tools_mod
-from agent.agent import MAX_ITERACOES
+from agent.agent import AgenteTriagemTI, MAX_ITERACOES
 from agent.prompts import REACT_PROMPT
 from agent.tools import FERRAMENTAS
 
@@ -298,6 +298,72 @@ class TestAgentExecutorSelecao(unittest.TestCase):
         # Nenhuma ferramenta REAL foi usada (_Exception é interno e filtrado)
         self.assertEqual(ferramentas, [])
 
+
+class TestFalhaGraciosa(unittest.TestCase):
+    """
+    Quando o executor se esgota (ou o modelo não produz resposta válida), o
+    agente devolve mensagem amigável SEM poluir o histórico — a próxima
+    mensagem começa com estado consistente.
+    """
+
+    class _ExecutorStop:
+        """Executor que replica o output cru do esgotamento de limite."""
+
+        @staticmethod
+        def invoke(_entrada, **_kwargs):
+            return {
+                "output": "Agent stopped due to iteration limit or time limit.",
+                "intermediate_steps": [],
+            }
+
+    def test_stop_do_executor_vira_mensagem_amigavel_sem_poluir_historico(self):
+        with patch(
+            "agent.agent.construir_agente", return_value=self._ExecutorStop()
+        ):
+            agente = AgenteTriagemTI()
+            resposta, ferramentas = agente.enviar_mensagem_com_passos(
+                "meu problema de rede"
+            )
+        self.assertIn("Não consegui", resposta)
+        self.assertNotIn("Agent stopped due to", resposta)
+        # Turno falho NÃO entra no histórico (estado consistente p/ retry)
+        self.assertEqual(agente.historico, [])
+
+    class _ExecutorVazio:
+        @staticmethod
+        def invoke(_entrada, **_kwargs):
+            return {"output": "", "intermediate_steps": []}
+
+    def test_saida_vazia_vira_mensagem_amigavel(self):
+        with patch(
+            "agent.agent.construir_agente", return_value=self._ExecutorVazio()
+        ):
+            agente = AgenteTriagemTI()
+            resposta, _ = agente.enviar_mensagem_com_passos("x")
+        self.assertIn("Não consegui", resposta)
+        self.assertEqual(agente.historico, [])
+
+    def test_sucesso_continua_entrando_no_historico(self):
+        executor = AgentExecutor(
+            agent=create_react_agent(
+                llm=FakeListChatModel(
+                    responses=["Thought: direto.\nFinal Answer: tudo certo!"]
+                ),
+                tools=FERRAMENTAS,
+                prompt=REACT_PROMPT,
+            ),
+            tools=FERRAMENTAS,
+            verbose=False,
+            handle_parsing_errors=True,
+            max_iterations=MAX_ITERACOES,
+        )
+        with patch("agent.agent.construir_agente", return_value=executor):
+            agente = AgenteTriagemTI()
+            resposta, ferramentas = agente.enviar_mensagem_com_passos("olá")
+        self.assertEqual(resposta, "tudo certo!")
+        self.assertEqual(ferramentas, [])
+        self.assertEqual(len(agente.historico), 2)
+        self.assertEqual(agente.historico[-1].content, "tudo certo!")
 
 
 if __name__ == "__main__":

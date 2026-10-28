@@ -30,6 +30,12 @@ INTEGRAÇÃO COM A VERSÃO ATUAL DO LANGCHAIN (langchain-classic 1.x):
     AgentExecutor._call). A subclasse
     AgentExecutorComCompressao._take_next_step comprime a lista ANTES de
     delegar ao super() — nenhum trecho do executor é reescrito (sem fork).
+  - Bônus de robustez: a MESMA subclasse também para o turno com uma
+    mensagem amigável (AgentFinish) quando o modelo dá
+    MAX_FALHAS_FORMATO_CONSECUTIVAS respostas seguidas inválidas — cada
+    passo "_Exception" consumia UMA iteração do executor e re-chamava o
+    LLM; sem progresso, o executor original só parava com o cru
+    "Agent stopped due to iteration limit or time limit.".
   - Só o caminho síncrono (.invoke, usado pela CP3) é coberto; os métodos
     assíncronos/Streaming (_aiter_next_step) não são sobrescritos.
 
@@ -45,7 +51,7 @@ import re
 from typing import Any
 
 from langchain_classic.agents import AgentExecutor
-from langchain_core.agents import AgentAction
+from langchain_core.agents import AgentAction, AgentFinish
 
 # ---------------------------------------------------------------------------
 # Configuração por env (valores default sensatos p/ 4 ferramentas)
@@ -53,6 +59,22 @@ from langchain_core.agents import AgentAction
 
 LIMITE_PADRAO_CARACTERES = 3000
 JANELA_PADRAO_RECENTES = 2
+
+# Limite de falhas de formato ReAct CONSECUTIVAS em um único turno. Cada
+# passo "_Exception" (resposta vazia ou malformada do modelo) consome UMA
+# iteração do executor e re-chama o LLM; seguidas, elas queimam o limite de
+# iterações/tempo sem progresso e o executor devolve o cru
+# "Agent stopped due to iteration limit or time limit.". A partir de
+# MAX_FALHAS_FORMATO_CONSECUTIVAS seguidas, o turno acaba com uma mensagem
+# amigável (o modelo ainda pode se recuperar de UMA ou DUAS falhas
+# pontuais — comportamento observado em produção e preservado).
+MAX_FALHAS_FORMATO_CONSECUTIVAS = 3
+
+MSG_FALHA_FORMATO = (
+    "Não consegui obter uma resposta válida do modelo nesta tentativa "
+    "(algumas respostas vieram vazias ou fora do formato esperado). "
+    "Reenvie a mensagem, por favor — normalmente funciona no reenvio."
+)
 
 # Marcador declarativo embutido na observação sintética — usado também
 # pelos testes para provar que a compressão de fato aconteceu no prompt.
@@ -199,11 +221,36 @@ def comprimir_intermediate_steps(
     return [(acao_sintetica, observacao_sintetica)] + recentes
 
 
+def contar_falhas_formato_consecutivas(
+    passos: list[tuple[AgentAction, str]],
+) -> int:
+    """
+    Quantos passos "_Exception" (falhas de parsing do formato ReAct) há
+    em sequência no FIM do scratchpad — ou seja, quantas respostas seguidas
+    o modelo deu vazias/malformadas até agora neste turno.
+    """
+    total = 0
+    for acao, _observacao in reversed(list(passos)):
+        if getattr(acao, "tool", "") == "_Exception":
+            total += 1
+        else:
+            break
+    return total
+
+
 class AgentExecutorComCompressao(AgentExecutor):
     """
-    AgentExecutor que comprime AS OBSERVAÇÕES DO SCRATCHPAD antes de cada
-    decisão ReAct (veja docstring do módulo para o que é e o que NÃO é).
-    Caminho síncrono (.invoke) — o único usado pela CP3.
+    AgentExecutor que, a cada iteração do loop ReAct:
+      1. comprime AS OBSERVAÇÕES DO SCRATCHPAD antigas (síntese extrativa
+         + janela recente);
+      2. encerra o turno com mensagem amigável quando o modelo dá
+         MAX_FALHAS_FORMATO_CONSECUTIVAS respostas seguidas inválidas —
+         em vez de queimar todas as iterações e terminar com o cru
+         "Agent stopped due to iteration limit or time limit".
+
+    Não reescreve o loop do executor: só ajusta a entrada de cada passo
+    (o mesmo contrato do AgentExecutor original). Caminho síncrono
+    (.invoke), o único usado pela CP3.
     """
 
     def _take_next_step(
@@ -214,9 +261,25 @@ class AgentExecutorComCompressao(AgentExecutor):
         intermediate_steps: list[tuple[AgentAction, str]],
         run_manager=None,
     ):
-        # Cada iteração reenvia o scratchpad acumulado; comprimimos AQUI,
-        # antes de delegar ao AgentExecutor original (sem reescrever o loop).
+        # Compressão do scratchpad ANTES de delegar ao AgentExecutor original.
         comprimidos = comprimir_intermediate_steps(intermediate_steps)
+
+        # Teto de falhas de formato: em vez de chamar o LLM de novo mais
+        # MAX_ITERACOES vezes (cada passo "_Exception" consumia UMA iteração
+        # e progresso nenhum), encerra o turno com AgentFinish amigável.
+        if (
+            contar_falhas_formato_consecutivas(comprimidos)
+            >= MAX_FALHAS_FORMATO_CONSECUTIVAS
+        ):
+            return AgentFinish(
+                return_values={"output": MSG_FALHA_FORMATO},
+                log=(
+                    "Thought: várias respostas seguidas do modelo vieram "
+                    "fora do formato ReAct; encerrando o turno para não "
+                    "gastar as iterações restantes sem progresso."
+                ),
+            )
+
         return super()._take_next_step(
             name_to_tool_map,
             color_mapping,

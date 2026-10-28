@@ -4,7 +4,7 @@ agent.py — Construção do agente ReAct (CP3).
     Arquitetura:
     ChatOllama (gemma4:cloud, Ollama Cloud via OLLAMA_API_KEY)
         | create_react_agent (prompt ReAct local, langchain_classic)
-        | AgentExecutorComCompressao (handle_parsing_errors, límites de
+        | AgentExecutorComCompressao (teto de falhas de formato, limites de
           iteração/tempo; bônus: compressão do scratchpad — ver
           agent/scratchpad_compressor.py)
     Gestão de histórico: lista de BaseMessage + compressão via
@@ -19,13 +19,11 @@ legado quebra na avaliação de type hints (issue langchain-ai/langchain#33449,
 documentada em app/memory_manager.py). Aqui eles são importados de
 "langchain_classic.agents", validado no venv do projeto."""
 
-from functools import lru_cache
-
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_classic.agents import AgentExecutor, create_react_agent
 
 from agent.prompts import REACT_PROMPT
-from agent.scratchpad_compressor import AgentExecutorComCompressao
+from agent.scratchpad_compressor import AgentExecutorComCompressao, MSG_FALHA_FORMATO
 from agent.tools import FERRAMENTAS
 from app.chain import build_llm as build_llm_app
 from app.memory_manager import aplicar_token_buffer
@@ -33,7 +31,23 @@ from agent.guardrail import validar_entrada
 
 # Limites do executor (razoáveis p/ 4 ferramentas e modelo cloud).
 MAX_ITERACOES = 8
-MAX_TEMPO_SEGUNDOS = 240
+# O gemma4:cloud (Ollama Cloud) VARIA bastante a latência por chamada
+# (documentada em 30–90 s; em janelas lentas passou disso neste projeto).
+# Um turno legítimo de 3 chamadas ao LLM já quase esgota 240 s e podia
+# parar no limite de tempo mesmo SEM falha — por isso 480 s. O limite de
+# iterações continua 8 (o executor também é guardado por
+# MAX_FALHAS_FORMATO_CONSECUTIVAS em agent/scratchpad_compressor.py).
+MAX_TEMPO_SEGUNDOS = 480
+
+# Saída crua devolvida pelo AgentExecutor (não é exceção!) quando o loop
+# se esgota; detectada para virar mensagem amigável na interface.
+_SAIDA_STOP_EXECUTOR = "Agent stopped due to iteration limit or time limit"
+
+MSG_FALHA_EXECUCAO = (
+    "Não consegui concluir o processamento agora (o modelo pode ter "
+    "demorado demais ou respondido de forma inválida). Reenvie a mensagem, "
+    "por favor — normalmente funciona no reenvio."
+)
 
 
 def construir_agente() -> AgentExecutor:
@@ -126,13 +140,26 @@ class AgenteTriagemTI:
                 if nome and nome in ferramentas_validas and nome not in vistos:
                     vistos.add(nome)
                     ferramentas_usadas.append(nome)
+
+            # O AgentExecutor NÃO lança exceção ao esgotar iterações/tempo:
+            # devolve a frase crua como "output" — assim como a resposta
+            # vazia (modelo cloud sem saída útil) e o encerramento pelo
+            # teto de falhas de formato do scratchpad. Em todos esses
+            # casos: mensagem amigável e o turno NÃO entra no histórico
+            # (estado consistente para a próxima mensagem).
+            if (
+                not resposta
+                or resposta.startswith(_SAIDA_STOP_EXECUTOR)
+                or resposta.startswith(MSG_FALHA_FORMATO)
+            ):
+                print(f"[agent] turno sem resposta usável do modelo "
+                      f"(ferramentas: {ferramentas_usadas or 'nenhuma'})")
+                return MSG_FALHA_EXECUCAO, ferramentas_usadas
         except Exception as exc:  # noqa: BLE001 — msg amigável s/ detalhes sensíveis
             print(f"[agent] erro de execução: {exc!r}")  # detalhe só no console
-            resposta = (
-                "Não consegui processar a mensagem agora (problema na "
-                "conexão com o modelo ou no limite de iterações do agente). "
-                "Tente reformular em uma mensagem mais curta e direta."
-            )
+            # O turno falhou: NÃO entra no histórico (evita poluir o
+            # contexto da próxima mensagem com um desabafo de sistema).
+            return MSG_FALHA_EXECUCAO, []
 
         self.historico.append(HumanMessage(content=mensagem))
         self.historico.append(AIMessage(content=resposta))

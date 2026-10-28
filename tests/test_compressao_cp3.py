@@ -249,5 +249,76 @@ class TestIntegracaoProducao(unittest.TestCase):
         self.assertLessEqual(MAX_ITERACOES, executor.max_iterations)
 
 
+class TestTetoFalhasFormato(unittest.TestCase):
+    """
+    Teto de falhas de formato ReAct consecutivas (respostas vazias/malformadas
+    do modelo): em vez de queimar todas as iterações até o cru
+    "Agent stopped due to iteration limit or time limit.", o executor
+    encerra o turno com mensagem amigável — e ainda tolera até
+    MAX_FALHAS_FORMATO_CONSECUTIVAS - 1 falhas seguidas para o modelo
+    se recuperar no mesma turno (comportamento observado em produção).
+    """
+
+    @staticmethod
+    @tool
+    def ferramenta_curta(consulta: str) -> str:
+        """Ferramenta trivial de teste."""
+        return "observação curta."
+
+    def _executor(self, respostas):
+        llm = FakeListChatModel(responses=respostas)
+        agente = create_react_agent(
+            llm=llm, tools=[self.ferramenta_curta], prompt=REACT_PROMPT,
+        )
+        return AgentExecutorComCompressao(
+            agent=agente,
+            tools=[self.ferramenta_curta],
+            verbose=False,
+            handle_parsing_errors=True,
+            max_iterations=12,
+            return_intermediate_steps=True,
+        )
+
+    def test_muitas_falhas_consecutivas_terminam_com_mensagem_amigavel(self):
+        saida = self._executor(["resposta sem formato ReAct nenhum."]).invoke(
+            {"input": "pergunta", "chat_history": []}
+        )
+        self.assertEqual(saida["output"], comp_mod.MSG_FALHA_FORMATO)
+        # NÃO é o cru de stop do langchain nem loop até burnout (12)
+        self.assertNotIn("Agent stopped due to", saida["output"])
+        etapas = saida.get("intermediate_steps", [])
+        self.assertLess(len(etapas), 6)
+
+    def test_modelo_se_recupera_apos_uma_ou_duas_falhas(self):
+        respostas = [
+            "resposta sem formato ReAct nenhum.",
+            "Thought: agora em formato válido.\nFinal Answer: recuperado.",
+        ]
+        saida = self._executor(respostas).invoke(
+            {"input": "pergunta", "chat_history": []}
+        )
+        self.assertEqual(saida["output"], "recuperado.")
+
+    def test_contador_de_falhas_consecutivas(self):
+        _acao, obs = _passo("consultar_base_conhecimento_ti", "ok")
+        etapas = [
+            (AgentAction(tool="_Exception", tool_input=f"erro {i}", log="x"), f"obs {i}")
+            for i in range(3)
+        ] + [_passo("consultar_base_conhecimento_ti", "ok")]
+        # Ferramenta real no fim: nenhuma falha consecutiva em andamento
+        self.assertEqual(comp_mod.contar_falhas_formato_consecutivas(etapas), 0)
+        # Uma exceção isolada no fim: 1
+        self.assertEqual(
+            comp_mod.contar_falhas_formato_consecutivas(
+                [(AgentAction(tool="_Exception", tool_input="e", log="x"), "obs")]
+            ),
+            1,
+        )
+        # Três exceções seguidas no fim: 3 (atinge MAX_FALHAS_FORMATO_CONSECUTIVAS)
+        self.assertEqual(
+            comp_mod.contar_falhas_formato_consecutivas(etapas[:-1]), 3
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
