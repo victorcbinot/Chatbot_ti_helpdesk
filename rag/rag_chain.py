@@ -28,6 +28,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_ollama import ChatOllama
 
+from rag.config import CONFIG_PADRAO_RAG, K_TRECHOS
 from rag.embeddings_store import carregar_vectorstore
 from rag.reranker import fetch_k, rerank_documentos, reranker_ativo
 
@@ -90,6 +91,44 @@ def build_llm(temperature: float = 0.0) -> ChatOllama:
     )
 
 
+def _recuperar_trechos(
+    vectorstore,
+    consulta: str,
+    k: int,
+    filtro: dict | None,
+    usar_rerank: bool,
+) -> list[Document]:
+    """
+    Etapa retrieve compartilhada por TODOS os caminhos de busca
+    (buscar_chunks, build_rag_chain e buscar_com_fontes) — a lógica de
+    recuperação existe UMA vez. Com reranking, recupera ``fetch_k``
+    candidatos no ChromaDB e reordena via cross-encoder; sem, devolve os
+    ``k`` melhores diretos. Em falha do cross-encoder, degrada para a
+    ordem original (mesmo comportamento anterior da chain).
+    """
+    n_candidatos = max(fetch_k(), k) if usar_rerank else k
+    candidatos = vectorstore.similarity_search(
+        consulta, k=n_candidatos, filter=filtro
+    )
+    if not usar_rerank:
+        return candidatos[:k]
+    try:
+        return rerank_documentos(consulta, candidatos, top_k=k)
+    except Exception as exc:  # noqa: BLE001 — degrada com aviso
+        print(f"[AVISO] Reranking falhou, usando ordem original: {exc}")
+        return candidatos[:k]
+
+
+def _resolver_rerank(rerank: bool | None) -> bool:
+    """None usa o padrão do env (RERANKER_ATIVO); caso contrário, usa o valor."""
+    return reranker_ativo() if rerank is None else rerank
+
+
+def _chain_geracao(llm: ChatOllama):
+    """Etapa generate compartilhada: RAG_PROMPT | llm | StrOutputParser()."""
+    return RAG_PROMPT | llm | StrOutputParser()
+
+
 def _formatar_contexto(documentos) -> str:
     """
     Formata os chunks recuperados pelo retriever em um único texto,
@@ -108,8 +147,8 @@ def _formatar_contexto(documentos) -> str:
 
 def buscar_chunks(
     consulta: str,
-    config_nome: str = "pequeno_512",
-    k: int = 4,
+    config_nome: str = CONFIG_PADRAO_RAG,
+    k: int = K_TRECHOS,
     filtro: dict | None = None,
     rerank: bool | None = None,
 ) -> list[Document]:
@@ -128,16 +167,9 @@ def buscar_chunks(
     Retorna os Documents já com metadata (source, page, categoria,
     fornecedor, tipo_documento) preservado.
     """
-    usar_rerank = reranker_ativo() if rerank is None else rerank
+    usar_rerank = _resolver_rerank(rerank)
     vectorstore = carregar_vectorstore(config_nome)
-
-    n_candidatos = max(fetch_k(), k) if usar_rerank else k
-    candidatos = vectorstore.similarity_search(
-        consulta, k=n_candidatos, filter=filtro
-    )
-    if not usar_rerank:
-        return candidatos[:k]
-    return rerank_documentos(consulta, candidatos, top_k=k)
+    return _recuperar_trechos(vectorstore, consulta, k, filtro, usar_rerank)
 
 
 def build_rag_chain(
@@ -164,27 +196,14 @@ def build_rag_chain(
     reranking ativo o ChromaDB recupera ``fetch_k`` candidatos e apenas os
     ``k`` melhores depois do rerank vão para o LLM.
     """
-    usar_rerank = reranker_ativo() if rerank is None else rerank
+    usar_rerank = _resolver_rerank(rerank)
     vectorstore = carregar_vectorstore(config_nome)
-    n_candidatos = max(fetch_k(), k) if usar_rerank else k
-    search_kwargs: dict = {"k": n_candidatos}
-    if filtro:
-        search_kwargs["filter"] = filtro
-    retriever = vectorstore.as_retriever(search_kwargs=search_kwargs)
     llm = llm or build_llm()
 
     def _recuperar_rerank_formatar(pergunta: str) -> str:
-        trechos = retriever.invoke(pergunta)
-        if not trechos:
-            return ""
-        if usar_rerank:
-            try:
-                trechos = rerank_documentos(pergunta, trechos, top_k=k)
-            except Exception as exc:  # noqa: BLE001 — degrada com aviso
-                print(f"[AVISO] Reranking falhou, usando ordem original: {exc}")
-                trechos = trechos[:k]
-        else:
-            trechos = trechos[:k]
+        trechos = _recuperar_trechos(
+            vectorstore, pergunta, k, filtro, usar_rerank
+        )
         return _formatar_contexto(trechos)
 
     # A chain inteira é um único Runnable: recebe a pergunta (string),
@@ -204,7 +223,7 @@ def build_rag_chain(
 
 def buscar(
     consulta: str,
-    config_nome: str = "pequeno_512",
+    config_nome: str = CONFIG_PADRAO_RAG,
     filtro: dict | None = None,
     rerank: bool | None = None,
 ) -> str:
@@ -219,30 +238,46 @@ def buscar(
     O parâmetro opcional `rerank` ativa (True) ou desativa (False) o
     reranking; None usa RERANKER_ATIVO (env).
 
-    Esta é a função que será reaproveitada como @tool no CKP03 (Agente) —
-    por isso a assinatura é mantida simples (str -> str) por padrão.
+    Esta é a função exposta como @tool no CKP03 (Agente) — a assinatura é
+    mantida simples (str -> str) por padrão. Quando as fontes também são
+    necessárias, use buscar_com_fontes(), que roda o MESMO pipeline
+    (uma única recuperação + uma única geração).
     """
-    chain = build_rag_chain(config_nome, filtro=filtro, rerank=rerank)
-    return chain.invoke(consulta)
+    resposta, _trechos = buscar_com_fontes(
+        consulta, config_nome=config_nome, filtro=filtro, rerank=rerank
+    )
+    return resposta
 
 
 def buscar_com_fontes(
     consulta: str,
-    config_nome: str = "pequeno_512",
+    config_nome: str = CONFIG_PADRAO_RAG,
     filtro: dict | None = None,
     rerank: bool | None = None,
+    llm: ChatOllama | None = None,
+    k: int = K_TRECHOS,
 ) -> tuple[str, list[Document]]:
     """
-    Responde a uma consulta e devolve também os trechos (Documents, com
-    metadata: source, page, categoria, ...) que fundamentaram a resposta.
+    Executa o pipeline RAG completo UMA vez (retrieve -> generate) e devolve
+    (resposta, trechos): a resposta gerada e os Documents que a fundamentaram,
+    com os metadados originais preservados (source, page, categoria,
+    fornecedor, tipo_documento).
 
-    Reusa buscar() (resposta) e buscar_chunks() (fontes) — ambos passam pelo
-    mesmo caminho retrieve (+ filtro de metadata e reranking opcionais) — sem
-    duplicar a lógica do pipeline. É a função usada pela interface Streamlit.
+    Reutiliza as MESMAS etapas do pipeline existente — recuperação via
+    _recuperar_trechos ( ChromaDB + filtro de metadata opcional + reranking
+    opcional do cross-encoder) e geração via _chain_geracao
+    (RAG_PROMPT | llm gemma4:cloud | StrOutputParser) — sem duplicar a
+    lógica e SEM rodar a busca/reranking duas vezes.
+
+    O parâmetro `llm` existe para testes automatizados com um modelo
+    substituto (mesmo contrato de build_rag_chain); None usa build_llm().
     """
-    resposta = buscar(consulta, config_nome=config_nome, filtro=filtro, rerank=rerank)
-    trechos = buscar_chunks(
-        consulta, config_nome=config_nome, k=4, filtro=filtro, rerank=rerank
+    usar_rerank = _resolver_rerank(rerank)
+    vectorstore = carregar_vectorstore(config_nome)
+    trechos = _recuperar_trechos(vectorstore, consulta, k, filtro, usar_rerank)
+    contexto = _formatar_contexto(trechos) if trechos else ""
+    resposta = _chain_geracao(llm or build_llm()).invoke(
+        {"contexto": contexto, "pergunta": consulta}
     )
     return resposta, trechos
 

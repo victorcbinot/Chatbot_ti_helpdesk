@@ -6,34 +6,38 @@ tools.py — Ferramentas (@tool) do agente de triagem de TI da CP3.
 create_react_agent) passa a Action Input como UMA string, então a
 assinatura das tools é propositalmente de um só parâmetro.
 
-  1. consultar_base_conhecimento_ti   — tool RAG da CP2 (@tool). Encapsula
-     ChromaDB + recuperação + reranking + geração do pipeline existente
-     (rag/rag_chain.py), SEM rodar busca/reranking duas vezes: busca os
-     trechos UMA vez (buscar_chunks, que já aplica o cross-encoder se
-     RERANKER_ATIVO=true) e gera a resposta com o mesmo
-     RAG_PROMPT/chroma/modelo da CP2. Devolve resposta + lista "Fontes:".
+  1. consultar_base_conhecimento_ti   — tool RAG da CP2 (@tool). CHAMA
+      buscar_com_fontes() de rag/rag_chain.py — a MESMA função buscar()
+      exposta pela CP2 (reuso do pipeline: ChromaDB persistido +
+      recuperação + filtro/reranking opcionais + geração) — SEM duplicar
+      retrieve nem generate, e com UMA única recuperação por consulta.
+      Devolve resposta + lista "Fontes:" (documentos, páginas e metadados
+      preservados pelo ChromaDB).
+      Filtro de metadata e reranking continuam disponíveis como parâmetros
+      de buscar()/buscar_com_fontes()/buscar_chunks() (rag/rag_chain.py);
+      na @tool o input único é uma consequência do parser ReAct — os
+      padrões usados são exatamente os da configuração vencedora
+      (rag/config.py + env RERANKER_ATIVO), sem filtro.
   2. classificar_chamado_ti           — LLM com saída Pydantic (reusa os
-     enums da CP1 em app/schemas.py) — categoria + prioridade explícita.
+      enums da CP1 em app/schemas.py) — categoria + prioridade explícita.
   3. gerar_checklist_diagnostico      — LLM com regras de segurança
-     (só procedimentos reversíveis).
+      (só procedimentos reversíveis).
   4. verificar_informacoes_minimas    — LLM com saída Pydantic; valida se
-     o relato contém informações mínimas de triagem (não consulta
-     sistemas externos).
+      o relato contém informações mínimas de triagem (não consulta
+      sistemas externos).
 
 Reuso (nada aqui consulta sistemas externos nem cria base nova):
-  - Carregar_vectorstore/chroma.db: reaproveitado via buscar_chunks()
-    (rag/rag_chain.py) — não reconstrói embeddings por pergunta.
-  - Reuso da geração: RAG_PROMPT, build_llm (gemma4:cloud) e
-    _formatar_contexto vêm de rag/rag_chain.py.
-  - Import primitivo privada (_formatar_contexto) é deliberado: evita
-    duplicar o formato de contexto com fonte citada da CP2.
+  - Configuração vencedora centralizada em rag/config.py (importada por
+    este módulo e pelo rag/rag_chain.py) — sem duplicar parâmetros.
+  - chroma.db persistido: reutilizado via carregar_vectorstore — não
+    reconstrói embeddings por pergunta (base_indexada() confere sem gerar
+    embeddings; ver rag/main.py, que só indexa quando falta a base).
+  - Geração/reuse do pipeline: tudo por buscar_com_fontes + _formatar_fontes
+    (metadados reais direto das Documents do ChromaDB).
 """
-
-from functools import lru_cache
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 
 from agent.prompts import (
@@ -44,16 +48,8 @@ from agent.prompts import (
 )
 from agent.schemas import ClassificacaoChamado, VerificacaoInformacoes
 from app.chain import build_llm as build_llm_app  # gemma4:cloud (CP1)
-from rag.rag_chain import (
-    RAG_PROMPT,
-    _formatar_contexto,
-    build_llm as build_llm_rag,
-    buscar_chunks,
-)
-
-# Configuração de chunking escolhida na CP2 (ver ragas_resultado.md).
-CONFIG_PADRAO_RAG = "pequeno_512"
-K_TRECHOS = 4
+from rag.config import CONFIG_PADRAO_RAG, K_TRECHOS
+from rag.rag_chain import buscar_com_fontes
 
 INSTRUCAO_INDEXACAO = (
     "A base de conhecimento persistida (chroma_db/) ainda não existe ou "
@@ -100,7 +96,7 @@ def _formatar_fontes(trechos: list[Document]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Ferramenta 1 — tool RAG (reuso da CP2, busca única)
+# Ferramenta 1 — tool RAG (chama buscar_com_fontes, reuso da CP2)
 # ---------------------------------------------------------------------------
 
 @tool
@@ -123,9 +119,12 @@ def consultar_base_conhecimento_ti(consulta: str) -> str:
         )
 
     try:
-        # UMA única recuperação por consulta — o reranking da CP2
-        # (cross-encoder) já entra dentro de buscar_chunks().
-        trechos = buscar_chunks(consulta, config_nome=CONFIG_PADRAO_RAG, k=K_TRECHOS)
+        # Pipeline RAG da CP2 executado UMA vez (recuperação [com filtro
+        # de metadata e reranking opcionais] + geração), agora pela função
+        # buscar_com_fontes() — a mesma do buscar() exposto da CP2.
+        resposta, trechos = buscar_com_fontes(
+            consulta, config_nome=CONFIG_PADRAO_RAG, k=K_TRECHOS
+        )
     except Exception as exc:  # noqa: BLE001 — degrada com instrução clara
         return (
             f"[ERRO] Falha ao consultar a base de conhecimento: {exc}\n" +
@@ -140,14 +139,8 @@ def consultar_base_conhecimento_ti(consulta: str) -> str:
             "NÃO responda com conhecimento geral."
         )
 
-    # Geração reusa o MESMO prompt/modelo/chains da CP2 (rag/rag_chain.py).
-    llm = build_llm_rag(temperature=0.0)
-    resposta = (
-        RAG_PROMPT
-        | llm
-        | StrOutputParser()
-    ).invoke({"contexto": _formatar_contexto(trechos), "pergunta": consulta})
-
+    # A resposta da CP2 já cita as fontes no texto; a lista abaixo repete
+    # os metadados REAIS dos Documents recuperados (nada é inventado).
     return (
         f"{resposta}\n\n"
         f"Fontes:\n{_formatar_fontes(trechos)}"

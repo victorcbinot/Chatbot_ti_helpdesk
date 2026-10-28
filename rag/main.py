@@ -17,6 +17,7 @@ Comandos especiais durante a conversa:
   sair      -> encerra o programa
 """
 
+from rag.config import CONFIG_PADRAO_RAG as CONFIG_PADRAO
 from rag.embeddings_store import carregar_vectorstore, criar_vectorstore
 from rag.loader import carregar_documentos, listar_documentos_fonte
 from rag.metadata import (
@@ -28,8 +29,6 @@ from rag.metadata import (
 from rag.rag_chain import build_rag_chain
 from rag.reranker import reranker_ativo
 from rag.splitter import CONFIGURACOES_CHUNKING, dividir_com_todas_configuracoes
-
-CONFIG_PADRAO = "pequeno_512"
 
 
 def _base_ja_indexada(config_nome: str) -> bool:

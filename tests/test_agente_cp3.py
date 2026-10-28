@@ -2,10 +2,11 @@
 test_agente_cp3.py — Testes OFFLINE do núcleo do agente da CP3.
 
 Não tocam na rede: o LLM é substituído por FakeListChatModel (langchain-core)
-e a recuperação RAG é simulada com stub de buscar_chunks. Validam:
+e a recuperação RAG é simulada com stub de buscar_com_fontes. Validam:
   - as 4 ferramentas existem, com nome/descrição e input único (ReAct);
   - o prompt ReAct tem todas as variáveis exigidas pelo create_react_agent;
-  - a tool RAG responde preservando "Fontes:" e roda a busca APENAS UMA vez;
+  - a tool RAG chama o pipeline da CP2 (buscar_com_fontes) UMA vez e
+    responde preservando "Fontes:";
   - as tools estruturadas retornam o formato acordado;
   - o AgentExecutor (create_react_agent) seleciona: (a) tool RAG e
     (b) nenhuma ferramenta em cenários apropriados.
@@ -91,15 +92,17 @@ class TestReactPrompt(unittest.TestCase):
 
 class TestToolRag(unittest.TestCase):
 
-    def test_resposta_preserva_fontes_e_busca_unica(self):
-        llm_falso = FakeListChatModel(responses=["Resposta RAG simulada."])
+    def test_resposta_preserva_fontes_e_pipeline_unico(self):
+        # A tool DEVE chamar o pipeline da CP2 (buscar_com_fontes) — buscar_chunks
+        # não é mais importado nem usado aqui (não existe em agent.tools).
+        self.assertFalse(hasattr(tools_mod, "buscar_chunks"))
         with patch.object(
             tools_mod, "base_indexada", return_value=True
         ) as _, patch.object(
-            tools_mod, "buscar_chunks", return_value=[_doc_fonte("ping")]
-        ) as stub_busca, patch.object(
-            tools_mod, "build_llm_rag", return_value=llm_falso
-        ):
+            tools_mod,
+            "buscar_com_fontes",
+            return_value=("Resposta RAG simulada.", [_doc_fonte("ping")]),
+        ) as stub_rag:
             resultado = tools_mod.consultar_base_conhecimento_ti.invoke(
                 {"consulta": "como diagnosticar a rede com ping?"}
             )
@@ -109,8 +112,9 @@ class TestToolRag(unittest.TestCase):
         self.assertIn("01_cisco_troubleshooting_tcp_ip.pdf", resultado)
         self.assertIn("página 12", resultado)
         self.assertIn("Resposta RAG simulada", resultado)
-        # Recuperação + reranking executados EXATAMENTE uma vez
-        self.assertEqual(stub_busca.call_count, 1)
+        # Pipeline da CP2 (recuperação + reranking + geração) executado
+        # APENAS uma vez por consulta
+        self.assertEqual(stub_rag.call_count, 1)
 
     def test_base_nao_indexada_retorna_instrucao(self):
         with patch.object(tools_mod, "base_indexada", return_value=False):
@@ -123,7 +127,9 @@ class TestToolRag(unittest.TestCase):
     def test_sem_informacao_na_base_nao_inventa(self):
         with patch.object(
             tools_mod, "base_indexada", return_value=True
-        ), patch.object(tools_mod, "buscar_chunks", return_value=[]):
+        ), patch.object(
+            tools_mod, "buscar_com_fontes", return_value=("", [])
+        ):
             resultado = tools_mod.consultar_base_conhecimento_ti.invoke(
                 {"consulta": "assunto fora da base"}
             )
@@ -133,7 +139,7 @@ class TestToolRag(unittest.TestCase):
         with patch.object(
             tools_mod, "base_indexada", return_value=True
         ), patch.object(
-            tools_mod, "buscar_chunks", side_effect=RuntimeError("chroma off")
+            tools_mod, "buscar_com_fontes", side_effect=RuntimeError("chroma off")
         ):
             resultado = tools_mod.consultar_base_conhecimento_ti.invoke(
                 {"consulta": "x"}
@@ -230,11 +236,9 @@ class TestAgentExecutorSelecao(unittest.TestCase):
         with patch.object(
             tools_mod, "base_indexada", return_value=True
         ), patch.object(
-            tools_mod, "buscar_chunks", return_value=[_doc_fonte("ping")]
-        ), patch.object(
             tools_mod,
-            "build_llm_rag",
-            return_value=FakeListChatModel(responses=["resp rag fake."]),
+            "buscar_com_fontes",
+            return_value=("resp rag fake.", [_doc_fonte("ping")]),
         ):
             saida = executor.invoke(
                 {"input": "como diagnosticar rede com ping?", "chat_history": []}
@@ -293,6 +297,7 @@ class TestAgentExecutorSelecao(unittest.TestCase):
         self.assertEqual(resposta, "resposta direta sem ferramenta.")
         # Nenhuma ferramenta REAL foi usada (_Exception é interno e filtrado)
         self.assertEqual(ferramentas, [])
+
 
 
 if __name__ == "__main__":
