@@ -2,7 +2,7 @@
 
 **Prompt Engineering & AI · FIAP · 2º Semestre 2026**
 
-> **Relação com as demais CPs:** esta é a documentação da CP1 (branch `cp1`). A CP2 (RAG) está documentada na branch `cp2` e a CP3 (agente) na branch `cp3`; a visão geral do projeto completo está no [README da branch `main`](https://github.com/victorcbinot/Chatbot_ti_helpdesk/blob/main/README.md). Aqui vive só o que é da CP1 — o código desta etapa está em `app/` e não foi alterado pelas demais checkpoints.
+> **Relação com as demais CPs:** esta é a documentação da CP1 (branch `cp1`). A CP2 (RAG) está documentada na branch `cp2` e a CP3 (agente) na branch `cp3`; Aqui vive só o que é da CP1 — o código desta etapa está em `app/` e não foi alterado pelas demais checkpoints.
 
 **Integrantes:** 
 | Nome | RM |
