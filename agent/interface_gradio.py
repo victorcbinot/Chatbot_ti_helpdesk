@@ -84,18 +84,33 @@ def _nova_sessao_agente() -> AgenteTriagemTI | None:
         return None
 
 
+_PADRAO_SECAO_FONTES = re.compile(
+    r"(?im)^[#* \-]*(\*\*)?[fF]ontes?(\*\*)?:?[#* \-]*$"
+)
+# Formato alternativo: o LLM pode resumir a seção da tool em uma citação
+# INLINE no meio do parágrafo (ex.: "... Fonte: 01_x.pdf, página 10."), com
+# conteúdo na MESMA linha do rótulo — a seção dedicada não casa nesse caso.
+_PADRAO_FONTES_INLINE = re.compile(
+    r"(?im)[#*> \-]*(\*\*)?[fF]ontes?(\*\*)?:\s*(\*\*)?[ \t]*([^\n]+?)[ \t]*\**[ \t]*$"
+)
+
+
 def _extrair_fontes(resposta: str) -> str:
     """
     Recorta, da resposta final do agente, o bloco de fontes montado pela
     tool RAG da CP2 ("Fontes:" + documento · página · classificação reais
-    do ChromaDB). Sem RAG na resposta, devolve string vazia.
+    do ChromaDB). Aceita os dois formatos que a resposta pode assumir:
+      1. seção dedicada (linha contendo apenas "Fontes:" e o bloco abaixo);
+      2. citação INLINE ("Fonte: doc.pdf, página N.") no meio do texto.
+    Sem nenhuma ocorrência, devolve string vazia.
     """
-    correspondencia = re.search(
-        r"(?im)^[#* \-]*(\*\*)?[fF]ontes?(\*\*)?:?[#* \-]*$", resposta
-    )
-    if correspondencia is None:
+    secao = _PADRAO_SECAO_FONTES.search(resposta)
+    if secao is not None:
+        return resposta[secao.end():].strip()
+    inline = _PADRAO_FONTES_INLINE.search(resposta)
+    if inline is None:
         return ""
-    return resposta[correspondencia.end():].strip()
+    return inline.group(4).strip()
 
 
 def _formatar_ferramentas(ferramentas: list[str]) -> str:
