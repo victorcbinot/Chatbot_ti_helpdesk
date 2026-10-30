@@ -2,6 +2,8 @@
 
 **Prompt Engineering & AI · FIAP · 2º Semestre 2026**
 
+> **Relação com as demais CPs:** esta é a documentação da CP2 (branch `cp2`). A CP1 (chatbot base) está documentada na branch `cp1` e a CP3 (agente) na branch `cp3`; a visão geral do projeto está no [README da branch `main`](https://github.com/victorcbinot/Chatbot_ti_helpdesk/blob/main/README.md). O pipeline descrito aqui (`rag/`) é reutilizado sem alterações pela CP3 como tool do agente.
+
 **Integrantes:**
 
 | Nome | RM |
@@ -70,7 +72,7 @@ python -m rag.ragas_eval
 2. Registre o arquivo em `rag/metadata.py` (dicionário `METADADOS_POR_ARQUIVO`), informando `categoria`, `fornecedor` e `tipo_documento` reais. Sem esse registro o documento entra como `Não classificado` e não responde bem aos filtros.
 3. **Apague a pasta `chroma_db/`** — o `main.py` só reconstrói a base quando ela não existe.
 4. Rode `python -m rag.main`: a base é reconstruída com todos os PDFs de `docs/`.
-5. Registre a fonte (título e link) na tabela acima.
+5. Registre a fonte (título e link) na tabela da base de conhecimento no topo.
 
 Se um PDF não tiver texto extraível, o `loader.py` mostra um `[AVISO]` com o nome do arquivo.
 
@@ -185,7 +187,7 @@ O reranking é opcional e pode ser desativado mantendo o comportamento original 
 
 O projeto ganhou uma interface gráfica web com **Streamlit** (`app/interface.py`). Ela **reutiliza o mesmo pipeline** do chat de terminal — em vez de chamar a chain diretamente, usa a função `buscar_com_fontes()` de `rag/rag_chain.py`, que devolve a resposta **e** os trechos que a sustentam — sem duplicar load, embeddings, retrieve ou generate.
 
-> **Por que Streamlit e não Gradio?** O enunciado cita Gradio para esse diferencial, mas o grupo optou pelo Streamlit porque o Gradio estava apresentando erros no nosso ambiente. Já no CKP01 tivemos problemas de compatibilidade (o formato do histórico do `gr.Chatbot` mudou entre versões do Gradio e quebrou a interface) e, neste projeto, voltaram a aparecer erros ao usá-lo. Trocamos pelo Streamlit, que entrega a mesma funcionalidade pedida: chat com o RAG integrado e a fonte citada em cada resposta.
+> **Por que Streamlit e não Gradio?** O enunciado cita Gradio para esse diferencial, mas o grupo optou pelo Streamlit porque o Gradio estava apresentando erros no nosso ambiente. Já no CKP01 tivemos problemas de compatibilidade (o formato do histórico do `gr.Chatbot` mudou entre versões do Gradio e quebrou a interface) e, neste projeto, voltaram a aparecer erros ao usá-lo. Trocamos pelo Streamlit, que entrega a mesma funcionalidade pedida: chat com o RAG integrado e a fonte citada em cada resposta. **Na CP3, o Gradio 6.30 voltou a funcionar no ambiente e é a interface oficial do agente** (documentação na branch `cp3`).
 
 ```bash
 streamlit run app/interface.py   # abre em http://localhost:8501
