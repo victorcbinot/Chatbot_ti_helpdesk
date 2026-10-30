@@ -334,7 +334,15 @@ A interface foi validada de duas formas, documentadas sem alteração do código
 1. **Do servidor de desenvolvimento:** elevar o app (`python -m agent.interface_gradio`) e conversar direto em `http://127.0.0.1:7866` — resposta com fontes no painel "Fontes consultadas nesta resposta", painel "Ferramentas usadas nesta resposta" apenas com os NOMES das ferramentas (o raciocínio ReAct interno nunca é exibido), botão "Limpar conversa" e os 3 exemplos clicáveis (`gr.Examples`).
 2. **De outra máquina, via `gradio_client` na URL pública `*.gradio.live`:** sessões distintas mantiveram históricos independentes (pergunta de contexto em A não "vazou" para B), "Limpar conversa" zerou tela e histórico interno (a próxima resposta ignorou a pergunta anterior), e perguntas fora de domínio/injeção foram barradas pelo guardrail na própria tela, sem stack trace e sem expor credenciais.
 
-> **Evidência visual (ação manual):** URLs `*.gradio.live` e screenshots são temporários — cada execução gera URL nova e encerrar o app derruba a antiga, então não há screenshot "de arquivo" que sobreviva à entrega. Para a evidência da entrega: levantar o app (`python -m agent.interface_gradio`), capturar a tela do navegador (aba com título "DocAgent de TI — CP3", painéis de fontes/ferramentas e uma conversa real) e guardar o print junto ao ZIP.
+> **Nota:** URLs `*.gradio.live` são temporárias — cada execução gera URL nova e encerrar o app derruba a antiga, então não há URL pública que sobreviva à entrega. Para reproduzir: levantar o app (`python -m agent.interface_gradio`) e copiar a URL nova do terminal.
+
+**Evidência visual 1 — agente funcionando com RAG** (`evidencias/agente_funcionando.png`): pergunta técnica respondida pela `consultar_base_conhecimento_ti`, com a resposta citando o documento/página e os painéis **"Fontes consultadas nesta resposta"** e **"Ferramentas usadas nesta resposta"** (apenas nomes, o raciocínio ReAct interno não é exibido):
+
+![Agente funcionando com RAG — resposta com fontes e ferramentas](evidencias/agente_funcionando.png)
+
+**Evidência visual 2 — conversa limpa** (`evidencias/conversa_limpa.png`): estado inicial após "Limpar conversa", com histórico zerado, painéis vazios e os 3 exemplos clicáveis (`gr.Examples`):
+
+![Conversa limpa — estado inicial da interface](evidencias/conversa_limpa.png)
 
 ### Interações reais registradas (22/10/2026, gemma4:cloud — ambiente do projeto)
 
